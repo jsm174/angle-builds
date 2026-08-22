@@ -40,7 +40,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          - os: macos-15
             platform: macos-arm64
           - os: windows-2022
             platform: windows-x64
@@ -78,11 +78,17 @@ jobs:
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
-        shell: cmd
+        shell: pwsh
         run: |
           cd angle
-          call gn gen out/Release --args="is_debug=false"
-          call autoninja -C out/Release libEGL libGLESv2
+          $sdk = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\Include' |
+            Where-Object { Test-Path "$($_.FullName)\um\windows.h" } |
+            Sort-Object Name | Select-Object -Last 1 -ExpandProperty Name
+          Write-Host "Using Windows SDK $sdk"
+          gn gen out/Release --args="is_debug=false windows_sdk_version=`"$sdk`""
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          autoninja -C out/Release libEGL libGLESv2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Package (macOS)
         if: runner.os == 'macOS'
