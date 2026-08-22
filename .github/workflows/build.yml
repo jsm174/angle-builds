@@ -1,0 +1,132 @@
+name: build
+
+on:
+  workflow_dispatch:
+    inputs:
+      angle_ref:
+        description: 'ANGLE ref (branch, tag, or full commit sha)'
+        required: false
+        default: 'main'
+
+permissions:
+  contents: write
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - name: Resolve ANGLE ref
+        id: resolve
+        run: |
+          REF="${{ inputs.angle_ref }}"
+          if [[ "$REF" =~ ^[0-9a-f]{40}$ ]]; then
+            SHA="$REF"
+          else
+            SHA=$(git ls-remote https://chromium.googlesource.com/angle/angle "$REF" "refs/heads/$REF" "refs/tags/$REF" | head -1 | cut -f1)
+          fi
+          if [ -z "$SHA" ]; then
+            echo "Could not resolve ANGLE ref '$REF'" >&2
+            exit 1
+          fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "tag=v$(date -u +%Y%m%d)-${SHA:0:12}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            platform: macos-arm64
+          - os: windows-2022
+            platform: windows-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    steps:
+      - name: Checkout depot_tools
+        shell: bash
+        run: git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "${{ github.workspace }}/depot_tools"
+
+      - name: Add depot_tools to PATH
+        shell: bash
+        run: |
+          echo "${{ github.workspace }}/depot_tools" >> "$GITHUB_PATH"
+          echo "DEPOT_TOOLS_WIN_TOOLCHAIN=0" >> "$GITHUB_ENV"
+
+      - name: Fetch ANGLE
+        shell: bash
+        run: |
+          git clone https://chromium.googlesource.com/angle/angle
+          cd angle
+          git checkout ${{ needs.resolve.outputs.sha }}
+          PY=python3
+          command -v python3 >/dev/null 2>&1 || PY=python
+          "$PY" scripts/bootstrap.py
+          gclient sync -D --no-history
+
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          cd angle
+          gn gen out/Release --args='is_debug=false'
+          autoninja -C out/Release libEGL libGLESv2
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          cd angle
+          call gn gen out/Release --args="is_debug=false"
+          call autoninja -C out/Release libEGL libGLESv2
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp angle/out/Release/libEGL.dylib dist/
+          cp angle/out/Release/libGLESv2.dylib dist/
+          cp angle/LICENSE dist/ANGLE-LICENSE.txt
+          cd dist
+          zip -X ../angle-${{ matrix.platform }}.zip libEGL.dylib libGLESv2.dylib ANGLE-LICENSE.txt
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item angle/out/Release/libEGL.dll dist/
+          Copy-Item angle/out/Release/libGLESv2.dll dist/
+          if (Test-Path angle/out/Release/d3dcompiler_47.dll) { Copy-Item angle/out/Release/d3dcompiler_47.dll dist/ }
+          Copy-Item angle/LICENSE dist/ANGLE-LICENSE.txt
+          Compress-Archive -Path dist/* -DestinationPath angle-${{ matrix.platform }}.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: angle-${{ matrix.platform }}
+          path: angle-${{ matrix.platform }}.zip
+
+  release:
+    needs: [resolve, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ needs.resolve.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --title "${{ needs.resolve.outputs.tag }}" \
+            --notes "ANGLE libEGL/libGLESv2 built from https://chromium.googlesource.com/angle/angle at commit ${{ needs.resolve.outputs.sha }}" \
+            angle-*.zip
