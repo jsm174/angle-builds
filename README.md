@@ -19,10 +19,15 @@ Each release is tagged `vYYYYMMDD-<commit>` and contains:
 
 ## Building a release
 
-Run the `build` workflow from the Actions tab. The `angle_ref` input accepts a
-branch, tag, or full commit sha from the upstream ANGLE repository; it defaults
-to `main`. The workflow resolves the ref to a commit, builds both platforms,
-and publishes a release with the artifacts.
+The ANGLE commit is pinned as `ANGLE_SHA` in `platforms/config.sh`, and each
+platform builds through its own `platforms/<platform>/external.sh` (also
+runnable locally). To cut a release, bump the pin and run the `Build ANGLE`
+workflow from the Actions tab; it builds both platforms and publishes a
+release with the artifacts.
+
+Pin commits from an ANGLE release branch (`chromium/NNNN`) rather than `main`:
+upstream `main` may require a Windows SDK that is not yet installable on CI
+runners.
 
 ## License
 
