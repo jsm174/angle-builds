@@ -29,17 +29,16 @@ jobs:
 
       - name: Package
         run: |
-          cd dist/${{ matrix.platform }}
           if [[ "${{ matrix.platform }}" == windows-* ]]; then
-            7z a ../../angle-${{ matrix.platform }}.zip .
+            cd dist/${{ matrix.platform }} && 7z a -r ../../angle-${{ matrix.platform }}.zip .
           else
-            zip -X ../../angle-${{ matrix.platform }}.zip *
+            tar czf angle-${{ matrix.platform }}.tar.gz -C dist/${{ matrix.platform }} .
           fi
 
       - uses: actions/upload-artifact@v7
         with:
           name: angle-${{ matrix.platform }}
-          path: angle-${{ matrix.platform }}.zip
+          path: angle-${{ matrix.platform }}.*
           if-no-files-found: error
 
   release:
@@ -62,4 +61,4 @@ jobs:
             --repo "${{ github.repository }}" \
             --title "$TAG" \
             --notes "ANGLE libEGL/libGLESv2 built from https://chromium.googlesource.com/angle/angle at commit ${ANGLE_SHA}" \
-            angle-*.zip
+            angle-*.zip angle-*.tar.gz
